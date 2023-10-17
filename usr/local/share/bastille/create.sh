@@ -82,6 +82,10 @@ validate_ip() {
         else
             local IFS
             if echo "${ip}" | grep -Eq '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))?$'; then
+		TEST_MASK=$(echo "${ip}" | cut -d / -f2)
+		    if TEST_MASK=""
+			echo "missing netmask"
+			exit 1
                 TEST_IP=$(echo "${ip}" | cut -d / -f1)
                 IFS=.
                 set ${TEST_IP}
