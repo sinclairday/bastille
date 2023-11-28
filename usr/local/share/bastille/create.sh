@@ -39,12 +39,13 @@ usage() {
     cat << EOF
     Options:
 
-    -E | --empty  -- Creates an empty container, intended for custom jail builds (thin/thick/linux or unsupported).
-    -L | --linux  -- This option is intended for testing with Linux jails, this is considered experimental.
-    -T | --thick  -- Creates a thick container, they consume more space as they are self contained and independent.
-    -V | --vnet   -- Enables VNET, VNET containers are attached to a virtual bridge interface for connectivity.
-    -C | --clone  -- Creates a clone container, they are duplicates of the base release, consume low space and preserves changing data.
-    -B | --bridge -- Enables VNET, VNET containers are attached to a specified, already existing external bridge.
+    -B | --bridge -- Enables VNET. VNET containers are attached to a bridge interface. (DIY)
+    -C | --clone  -- Creates a ZFS clone container. Clones are ZFS snapshots of the release, consuming minimal storage.
+    -E | --empty  -- Creates an empty container. Intended for custom jail builds and experimentation.
+    -L | --linux  -- This option is intended for testing with Linux jails. This is considered experimental.
+    -N | --nested -- Creates a Nested container. Nesting containers provides support for "pods", poudriere, etc.
+    -T | --thick  -- Creates a thick container. Thick containers consume more space as they are full copies of a release.
+    -V | --vnet   -- Enables VNET. VNET containers are attached to a bridge interface (FreeBSD jib).
 
 EOF
     exit 1
@@ -233,6 +234,44 @@ ${NETBLOCK}
 EOF
 }
 
+generate_nested_vnet_jail_conf() {
+    NETBLOCK=$(generate_vnet_jail_netblock "$NAME" "${VNET_JAIL_BRIDGE}" "${bastille_jail_conf_interface}")
+    cat << EOF > "${bastille_jail_conf}"
+${NAME} {
+  devfs_ruleset = 13;
+  enforce_statfs = 1;
+  exec.clean;
+  exec.consolelog = ${bastille_jail_log};
+  exec.start = '/bin/sh /etc/rc';
+  exec.stop = '/bin/sh /etc/rc.shutdown';
+  host.hostname = ${NAME};
+  mount.devfs;
+  mount.fstab = ${bastille_jail_fstab};
+  path = ${bastille_jail_path};
+  securelevel = 2;
+  osrelease = ${RELEASE};
+
+  children.max = 16;
+
+  allow.chflags;
+  allow.mount;
+  allow.mount.devfs;
+  allow.mount.fdescfs;
+  allow.mount.linprocfs;
+  allow.mount.nullfs;
+  allow.mount.procfs;
+  allow.mount.tmpfs;
+  allow.mount.zfs;
+  allow.raw_sockets;
+  allow.set_hostname;
+  ## nested params
+
+${NETBLOCK}
+}
+EOF
+}
+
+
 post_create_jail() {
     # Common config checks and settings.
 
@@ -262,7 +301,9 @@ post_create_jail() {
     fi
 
     # Generate the jail configuration file.
-    if [ -n "${VNET_JAIL}" ]; then
+    if [ -n "${NESTED_JAIL}" ] && [ -n "${VNET_JAIL}" ]; then
+        generate_nested_vnet_jail_conf
+    elif [ -n "${VNET_JAIL}" ]; then
         generate_vnet_jail_conf
     else
         generate_jail_conf
@@ -607,22 +648,6 @@ LINUX_JAIL=""
 # Handle and parse options
 while [ $# -gt 0 ]; do
     case "${1}" in
-        -E|--empty)
-            EMPTY_JAIL="1"
-            shift
-            ;;
-        -L|--linux)
-            LINUX_JAIL="1"
-            shift
-            ;;
-        -T|--thick)
-            THICK_JAIL="1"
-            shift
-            ;;
-        -V|--vnet)
-            VNET_JAIL="1"
-            shift
-            ;;
         -B|--bridge)
             VNET_JAIL="1"
             VNET_JAIL_BRIDGE="1"
@@ -632,26 +657,32 @@ while [ $# -gt 0 ]; do
             CLONE_JAIL="1"
             shift
             ;;
-        -CV|-VC|--clone-vnet)
-            CLONE_JAIL="1"
-            VNET_JAIL="1"
-            shift
-            ;;
         -CB|-BC|--clone-bridge)
             CLONE_JAIL="1"
             VNET_JAIL="1"
             VNET_JAIL_BRIDGE="1"
             shift
             ;;
-        -TV|-VT|--thick-vnet)
-            THICK_JAIL="1"
+        -CV|-VC|--clone-vnet)
+            CLONE_JAIL="1"
             VNET_JAIL="1"
             shift
             ;;
-        -TB|-BT|--thick-bridge)
-            THICK_JAIL="1"
+        -CNB|--nested-clone-bridge)
+            CLONE_JAIL="1"
+            NESTED_JAIL="1"
             VNET_JAIL="1"
             VNET_JAIL_BRIDGE="1"
+            shift
+            ;;
+        -CNV|--nested-clone-vnet)
+            CLONE_JAIL="1"
+            NESTED_JAIL="1"
+            VNET_JAIL="1"
+            shift
+            ;;
+        -E|--empty)
+            EMPTY_JAIL="1"
             shift
             ;;
         -EB|-BE|--empty-bridge)
@@ -665,15 +696,42 @@ while [ $# -gt 0 ]; do
             VNET_JAIL="1"
             shift
             ;;
-        -LV|-VL|--linux-vnet)
+        -L|--linux)
             LINUX_JAIL="1"
-            VNET_JAIL="1"
             shift
             ;;
         -LB|-BL|--linux-bridge)
             LINUX_JAIL="1"
             VNET_JAIL="1"
             VNET_JAIL_BRIDGE="1"
+            shift
+            ;;
+        -N|--nested)
+            NESTED_JAIL="1"
+            shift
+            ;;
+        -T|--thick)
+            THICK_JAIL="1"
+            shift
+            ;;
+        -TB|-BT|--thick-bridge)
+            THICK_JAIL="1"
+            VNET_JAIL="1"
+            VNET_JAIL_BRIDGE="1"
+            shift
+            ;;
+        -TV|-VT|--thick-vnet)
+            THICK_JAIL="1"
+            VNET_JAIL="1"
+            shift
+            ;;
+        -V|--vnet)
+            VNET_JAIL="1"
+            shift
+            ;;
+        -LV|-VL|--linux-vnet)
+            LINUX_JAIL="1"
+            VNET_JAIL="1"
             shift
             ;;
         -*|--*)
